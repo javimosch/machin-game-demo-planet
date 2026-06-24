@@ -16,14 +16,16 @@ A procedurally generated **GPU mesh** — a curved chunk of a planet's surface, 
 ./machin-demo-planet
 ```
 
-Needs `machin` **v0.47.0+** (pointer/array FFI), a C compiler, **raylib**, and a display. `build.sh` prefers a system raylib, else vendors the prebuilt static release into `vendor/` (no root).
+Needs `machin` **v0.48.0+** (pointer/array FFI), a C compiler, **raylib**, and a display. `build.sh` prefers a system raylib, else vendors the prebuilt static release into `vendor/` (no root).
 
 ## Pointer/array FFI: building a GPU mesh from MFL
 
-machin v0.47.0 added the pieces to hand C a raw buffer/struct:
+machin v0.47.0/v0.48.0 added the pieces to hand C a raw buffer/struct:
 
 - **Raw memory** (pointers are `int`s): `p := alloc(nbytes)` (zeroed), `poke_f32`/`poke_i32`/`poke_u8`/`poke_u16`/`poke_ptr(p, byteOffset, v)`, `peek_f32`/`peek_i32`, `free(p)`.
-- **`*T` param**: `fn LoadModelFromMesh(*Mesh) Model` — the MFL arg is a pointer (`int`); the call emits `*(Mesh*)ptr`, passing the struct **by value**. To pass the pointer itself, use `ptr` (becomes `void*`, which C converts to any `T*`) — e.g. `fn UploadMesh(ptr, bool)` for `UploadMesh(Mesh*)`, which writes the VAO/VBO ids back into your buffer.
+- **Pointer cstruct fields** (v0.48.0): a `cstruct` field may be `ptr` (a pointer, held as `int`), so you declare a struct like `Mesh` with its buffer fields and the C compiler lays it out.
+- **Inout `T*` param** (v0.48.0): `fn UploadMesh(Mesh*, bool)` — pass a cstruct *variable* by pointer; the call writes the modified struct (the VAO/VBO ids) back into it. By value for the rest: `fn LoadModelFromMesh(Mesh) Model`.
+- Other pointer forms: `ptr` passes a raw pointer (`void*` → any `T*`); `*T` derefs a raw pointer to a by-value struct.
 - **Opaque `Model`** (`cstruct Model {}`): raylib's `Model` has pointers, so it's an opaque handle — received from `LoadModelFromMesh`, passed to `DrawModelEx`.
 
 The flow (build once, draw forever):
@@ -32,18 +34,22 @@ The flow (build once, draw forever):
 vbuf := alloc(vcount*12)   // 3 f32 per vertex
 cbuf := alloc(vcount*4)    // RGBA per vertex
 // ... poke positions into vbuf, colors into cbuf ...
-m := alloc(112)            // sizeof(Mesh), zeroed
-poke_i32(m, 0, vcount)  poke_i32(m, 4, vcount/3)
-poke_ptr(m, 8, vbuf)    poke_ptr(m, 48, cbuf)
-UploadMesh(m, false)       // GPU upload; writes vaoId@96 / vboId@104 into m
-model := LoadModelFromMesh(m)   // *Mesh: deref m, pass Mesh by value
+mesh := Mesh{vcount, vcount/3, vbuf, cbuf, 0, 0}   // a cstruct; ptr fields hold the buffers
+UploadMesh(mesh, false)         // inout: GPU upload; writes vaoId/vboId back into mesh
+model := LoadModelFromMesh(mesh)   // by value, now uploaded
 // each frame:
 DrawModelEx(model, pos, axis, angle, scale, tint)
 ```
 
-## The Mesh layout (raylib 5.0, x86-64)
+## The Mesh cstruct (machin v0.48.0+)
 
-`sizeof(Mesh) = 112`. Offsets you poke: `vertexCount@0` (i32), `triangleCount@4` (i32), `vertices@8` (ptr), `normals@32` (ptr), `colors@48` (ptr); raylib writes `vaoId@96` / `vboId@104`. **Layout-specific** — pin the raylib version (the vendored build does). Get offsets for another version with a tiny C program using `offsetof`.
+Declare raylib's `Mesh` as a `cstruct` with the fields you touch — **pointer fields** (`ptr`) hold the raw buffers and the C compiler lays out the struct (no offsets):
+
+```
+cstruct Mesh { vertexCount i32  triangleCount i32  vertices ptr  colors ptr  vaoId u32  vboId ptr }
+```
+
+Field **names** must match raylib's `Mesh` (the boundary marshals by name); unset fields default to zero/NULL (`UploadMesh` handles missing texcoords/normals). `vaoId`/`vboId` must be declared so they round-trip — `UploadMesh` writes them and `LoadModelFromMesh` reads them. (Pre-v0.48.0 this was poked at hard-coded byte offsets into `alloc`'d memory; the cstruct form is version-robust.)
 
 ## Patterns worth copying
 

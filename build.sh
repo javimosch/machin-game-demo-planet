@@ -3,7 +3,7 @@
 # fetches raylib's prebuilt *static* release into vendor/ (no root needed) and
 # links that. The committed source stays system-style; the vendored path is
 # injected into a throwaway copy so planet.src is never rewritten.
-# Requires machin v0.47.0+ (pointer/array FFI: alloc/poke + *Mesh param).
+# Requires machin v0.48.0+ (pointer/array FFI: alloc/poke + *Mesh param).
 set -euo pipefail
 cd "$(dirname "$0")"
 MACHIN="${MACHIN:-machin}"

@@ -5,13 +5,14 @@
 //
 //   ./build.sh && ./machin-demo-planet
 //
-// This is the dogfood for machin's **pointer/array FFI** (added with this demo):
-//   - raw heap buffers — alloc / poke_f32 / poke_u8 / poke_ptr / free — to fill
-//     the vertex + color arrays and the raylib Mesh struct itself;
-//   - UploadMesh(Mesh*) reached by passing the raw Mesh pointer as `ptr`;
-//   - LoadModelFromMesh(Mesh) via the new `*Mesh` FFI convention (deref a pointer
-//     and pass the C struct by value);
-//   - Model as an opaque handle.
+// This is the dogfood for machin's **pointer/array FFI**:
+//   - raw heap buffers — alloc / poke_f32 / poke_u8 / free — to fill the vertex
+//     and color arrays;
+//   - a cstruct Mesh with **pointer fields** (`ptr`) holding those buffers — the
+//     C compiler lays out the struct (no hard-coded byte offsets);
+//   - UploadMesh(Mesh*) — an **inout** FFI param: pass the mesh by pointer, the
+//     call writes the GPU vao/vbo ids back into it;
+//   - LoadModelFromMesh(Mesh) by value; Model as an opaque handle.
 // Heights use native math (v0.46.0); the camera is a nested Camera3D (v0.45.0).
 
 extern "raylib" {
@@ -21,6 +22,9 @@ extern "raylib" {
     cstruct Vector3 { x f32 y f32 z f32 }
     cstruct Camera3D { position Vector3 target Vector3 up Vector3 fovy f32 projection i32 }
     cstruct Model {}                                  // opaque handle (raylib Model has pointers)
+    // a raylib Mesh, only the fields we set/read — pointer fields (`ptr`) hold raw
+    // buffers; the C compiler lays out the struct (no hard-coded byte offsets).
+    cstruct Mesh { vertexCount i32 triangleCount i32 vertices ptr colors ptr vaoId u32 vboId ptr }
     fn InitWindow(i32, i32, string)
     fn SetTargetFPS(i32)
     fn WindowShouldClose() bool
@@ -29,16 +33,13 @@ extern "raylib" {
     fn ClearBackground(Color)
     fn BeginMode3D(Camera3D)
     fn EndMode3D()
-    fn UploadMesh(ptr, bool)                          // takes Mesh* (void* -> Mesh*); writes vao/vbo back
-    fn LoadModelFromMesh(*Mesh) Model                 // *Mesh: deref the ptr, pass Mesh by value
+    fn UploadMesh(Mesh*, bool)                        // inout: pass &mesh; writes vaoId/vboId back
+    fn LoadModelFromMesh(Mesh) Model                  // by value (the uploaded mesh)
     fn DrawModelEx(Model, Vector3, Vector3, f32, Vector3, Color)
     fn DrawText(string, i32, i32, i32, Color)
     fn CloseWindow()
 }
 
-// raylib Mesh layout (5.0, x86-64): sizeof 112; vertexCount@0 triangleCount@4
-// vertices@8 normals@32 colors@48 (8-byte pointers); vaoId@96 vboId@104.
-func MESH_SIZE() (n) { n = 112 }
 func BASE_R() (n) { n = 12.0 }        // planet radius
 func CELLS() (n) { n = 72 }           // grid cells per side
 func LON() (n) { n = 0.72 }           // half-span in longitude (radians)
@@ -157,14 +158,11 @@ func build_planet() (model) {
         j = j + 1
     }
 
-    // assemble the raylib Mesh struct in raw memory and upload to the GPU
-    m := alloc(MESH_SIZE())
-    poke_i32(m, 0, vcount)        // vertexCount
-    poke_i32(m, 4, vcount / 3)    // triangleCount
-    poke_ptr(m, 8, vbuf)          // vertices
-    poke_ptr(m, 48, cbuf)         // colors
-    UploadMesh(m, false)          // GPU upload; writes vaoId/vboId into m
-    model = LoadModelFromMesh(m)  // *Mesh: deref m, pass the Mesh by value
+    // assemble the raylib Mesh as a cstruct — pointer fields hold the raw buffers,
+    // and the C compiler lays out the struct (no hard-coded offsets).
+    mesh := Mesh{vcount, vcount / 3, vbuf, cbuf, 0, 0}
+    UploadMesh(mesh, false)          // inout: GPU upload, writes vaoId/vboId back into mesh
+    model = LoadModelFromMesh(mesh)  // by value, now uploaded
 }
 
 func main() {
