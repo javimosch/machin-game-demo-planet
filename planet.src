@@ -1,0 +1,199 @@
+// machin-demo-planet — a procedurally generated **GPU mesh**: a curved chunk of a
+// planet's surface, built once in raw memory by machin (MFL), uploaded to a GPU
+// vertex buffer, and drawn as a real model. Heights and per-triangle shading are
+// computed in MFL; the geometry lives on the GPU (not re-sent each frame).
+//
+//   ./build.sh && ./machin-demo-planet
+//
+// This is the dogfood for machin's **pointer/array FFI** (added with this demo):
+//   - raw heap buffers — alloc / poke_f32 / poke_u8 / poke_ptr / free — to fill
+//     the vertex + color arrays and the raylib Mesh struct itself;
+//   - UploadMesh(Mesh*) reached by passing the raw Mesh pointer as `ptr`;
+//   - LoadModelFromMesh(Mesh) via the new `*Mesh` FFI convention (deref a pointer
+//     and pass the C struct by value);
+//   - Model as an opaque handle.
+// Heights use native math (v0.46.0); the camera is a nested Camera3D (v0.45.0).
+
+extern "raylib" {
+    header "raylib.h"
+    link "raylib" link "GL" link "m" link "pthread" link "dl" link "rt" link "X11"
+    cstruct Color { r u8 g u8 b u8 a u8 }
+    cstruct Vector3 { x f32 y f32 z f32 }
+    cstruct Camera3D { position Vector3 target Vector3 up Vector3 fovy f32 projection i32 }
+    cstruct Model {}                                  // opaque handle (raylib Model has pointers)
+    fn InitWindow(i32, i32, string)
+    fn SetTargetFPS(i32)
+    fn WindowShouldClose() bool
+    fn BeginDrawing()
+    fn EndDrawing()
+    fn ClearBackground(Color)
+    fn BeginMode3D(Camera3D)
+    fn EndMode3D()
+    fn UploadMesh(ptr, bool)                          // takes Mesh* (void* -> Mesh*); writes vao/vbo back
+    fn LoadModelFromMesh(*Mesh) Model                 // *Mesh: deref the ptr, pass Mesh by value
+    fn DrawModelEx(Model, Vector3, Vector3, f32, Vector3, Color)
+    fn DrawText(string, i32, i32, i32, Color)
+    fn CloseWindow()
+}
+
+// raylib Mesh layout (5.0, x86-64): sizeof 112; vertexCount@0 triangleCount@4
+// vertices@8 normals@32 colors@48 (8-byte pointers); vaoId@96 vboId@104.
+func MESH_SIZE() (n) { n = 112 }
+func BASE_R() (n) { n = 12.0 }        // planet radius
+func CELLS() (n) { n = 72 }           // grid cells per side
+func LON() (n) { n = 0.72 }           // half-span in longitude (radians)
+func LAT() (n) { n = 0.56 }           // half-span in latitude
+
+func col(r, g, b) (c) { c = Color{r, g, b, 255} }
+func v3(x, y, z) (v) { v = Vector3{x, y, z} }
+
+func clampf(v, lo, hi) (o) {
+    o = v
+    if o < lo { o = lo }
+    if o > hi { o = hi }
+}
+
+// terrain height as a function of (latitude, longitude) — layered trig
+func height(la, lo) (h) {
+    h = 1.2 * sin(lo * 4.0 + la * 2.0) + 0.7 * cos(la * 5.0 - lo * 3.0) + 0.4 * sin((lo + la) * 11.0) + 0.22 * cos(lo * 19.0 - la * 15.0)
+}
+
+// a surface corner: world position on the displaced sphere (recentered so the
+// chunk sits around the origin), plus its height.
+func corner(la, lo) (x, y, z, h) {
+    h = height(la, lo)
+    r := BASE_R() + h
+    cla := cos(la)
+    x = r * cla * sin(lo)
+    y = r * sin(la)
+    z = r * cla * cos(lo) - BASE_R()
+}
+
+// flat-shaded color for a triangle: face normal -> light, base hue by height
+func shade_color(x0, y0, z0, x1, y1, z1, x2, y2, z2, ha) (r, g, b) {
+    ux := x1 - x0
+    uy := y1 - y0
+    uz := z1 - z0
+    vx := x2 - x0
+    vy := y2 - y0
+    vz := z2 - z0
+    nx := uy * vz - uz * vy
+    ny := uz * vx - ux * vz
+    nz := ux * vy - uy * vx
+    ln := sqrt(nx * nx + ny * ny + nz * nz) + 0.0001
+    d := (nx * 0.30 + ny * 0.85 + nz * 0.45) / ln
+    sh := 0.42 + 0.58 * clampf(d, 0.0, 1.0)
+
+    br := 70.0
+    bg := 150.0
+    bb := 80.0
+    if ha < 0.0 - 0.3 { br = 30.0  bg = 80.0  bb = 150.0 }   // ocean
+    if ha < 0.0 - 0.9 { br = 24.0  bg = 60.0  bb = 120.0 }   // deep ocean
+    if ha > 0.6 { br = 130.0  bg = 120.0  bb = 95.0 }        // rock
+    if ha > 1.3 { br = 240.0  bg = 242.0  bb = 248.0 }       // snow
+
+    r = int(br * sh)
+    g = int(bg * sh)
+    b = int(bb * sh)
+}
+
+// poke one triangle (3 vertices + a flat color) into the GPU buffers; return the
+// next vertex index.
+func put_tri(vbuf, cbuf, vi, ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b) (nvi) {
+    poke_f32(vbuf, vi * 12, ax)
+    poke_f32(vbuf, vi * 12 + 4, ay)
+    poke_f32(vbuf, vi * 12 + 8, az)
+    poke_f32(vbuf, (vi + 1) * 12, bx)
+    poke_f32(vbuf, (vi + 1) * 12 + 4, by)
+    poke_f32(vbuf, (vi + 1) * 12 + 8, bz)
+    poke_f32(vbuf, (vi + 2) * 12, cx)
+    poke_f32(vbuf, (vi + 2) * 12 + 4, cy)
+    poke_f32(vbuf, (vi + 2) * 12 + 8, cz)
+    k := 0
+    while k < 3 {
+        poke_u8(cbuf, (vi + k) * 4, r)
+        poke_u8(cbuf, (vi + k) * 4 + 1, g)
+        poke_u8(cbuf, (vi + k) * 4 + 2, b)
+        poke_u8(cbuf, (vi + k) * 4 + 3, 255)
+        k = k + 1
+    }
+    nvi = vi + 3
+}
+
+// build the chunk into raw GPU buffers + a Mesh struct; upload; return the model
+func build_planet() (model) {
+    n := CELLS()
+    vcount := n * n * 6
+    dlo := 2.0 * LON() / float(n)
+    dla := 2.0 * LAT() / float(n)
+
+    vbuf := alloc(vcount * 12)   // 3 floats per vertex
+    cbuf := alloc(vcount * 4)    // 4 bytes (RGBA) per vertex
+
+    vi := 0
+    j := 0
+    while j < n {
+        i := 0
+        while i < n {
+            lo0 := 0.0 - LON() + float(i) * dlo
+            lo1 := lo0 + dlo
+            la0 := 0.0 - LAT() + float(j) * dla
+            la1 := la0 + dla
+
+            ax, ay, az, ah := corner(la0, lo0)
+            bx, by, bz, bh := corner(la0, lo1)
+            cx, cy, cz, ch := corner(la1, lo1)
+            dx, dy, dz, dh := corner(la1, lo0)
+
+            ha1 := (ah + bh + ch) / 3.0
+            r1, g1, b1 := shade_color(ax, ay, az, bx, by, bz, cx, cy, cz, ha1)
+            vi = put_tri(vbuf, cbuf, vi, ax, ay, az, bx, by, bz, cx, cy, cz, r1, g1, b1)
+
+            ha2 := (ah + ch + dh) / 3.0
+            r2, g2, b2 := shade_color(ax, ay, az, cx, cy, cz, dx, dy, dz, ha2)
+            vi = put_tri(vbuf, cbuf, vi, ax, ay, az, cx, cy, cz, dx, dy, dz, r2, g2, b2)
+            i = i + 1
+        }
+        j = j + 1
+    }
+
+    // assemble the raylib Mesh struct in raw memory and upload to the GPU
+    m := alloc(MESH_SIZE())
+    poke_i32(m, 0, vcount)        // vertexCount
+    poke_i32(m, 4, vcount / 3)    // triangleCount
+    poke_ptr(m, 8, vbuf)          // vertices
+    poke_ptr(m, 48, cbuf)         // colors
+    UploadMesh(m, false)          // GPU upload; writes vaoId/vboId into m
+    model = LoadModelFromMesh(m)  // *Mesh: deref m, pass the Mesh by value
+}
+
+func main() {
+    InitWindow(900, 660, "machin - planet chunk")
+    SetTargetFPS(60)
+
+    model := build_planet()
+
+    t := 0.0
+    while WindowShouldClose() == false {
+        t = t + 0.005
+
+        cam := Camera3D{
+            v3(0.0, 7.0, 19.0),
+            v3(0.0, 0.0, 0.0),
+            v3(0.0, 1.0, 0.0),
+            45.0, 0}
+
+        BeginDrawing()
+        ClearBackground(col(10, 12, 24))
+        BeginMode3D(cam)
+        // the GPU mesh, slowly turning to show the curvature
+        DrawModelEx(model, v3(0.0, 0.0, 0.0), v3(0.1, 1.0, 0.0), t * 12.0, v3(1.0, 1.0, 1.0), col(255, 255, 255))
+        EndMode3D()
+
+        DrawText("machin - planet chunk", 18, 16, 24, col(235, 238, 248))
+        DrawText("a GPU mesh built in MFL via raw-memory FFI (alloc/poke + UploadMesh)", 18, 46, 16, col(150, 160, 185))
+        EndDrawing()
+    }
+
+    CloseWindow()
+}
