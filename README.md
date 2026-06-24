@@ -1,4 +1,4 @@
-# machin-demo-planet
+# machin-game-demo-planet
 
 A procedurally generated **GPU mesh** — a curved chunk of a planet's surface, built **once** in raw memory by **[machin](https://github.com/javimosch/machin)** (MFL), uploaded to a GPU vertex buffer, and drawn as a real model. Heights and per-triangle shading are computed in MFL; the geometry lives in VRAM, not re-sent each frame.
 
@@ -36,8 +36,8 @@ So machin builds a C buffer + struct from scratch and hands it to OpenGL. The Ti
 Needs the `machin` compiler (**v0.48.0+**), a C compiler, **raylib**, and a display. A GUI binary links the system graphics stack, so it is **not** a no-dependency binary.
 
 ```bash
-./build.sh            # → ./machin-demo-planet
-./machin-demo-planet
+./build.sh            # → ./machin-game-demo-planet
+./machin-game-demo-planet
 ```
 
 `build.sh` uses a **system raylib** if installed; otherwise it **vendors raylib's prebuilt static release** into `vendor/` automatically — no root required.

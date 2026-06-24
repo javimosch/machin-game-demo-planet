@@ -1,9 +1,9 @@
 ---
-name: machin-demo-planet
-description: Build, run, and modify machin-demo-planet — a procedurally generated GPU mesh (planet-surface chunk) in machin (MFL) via raylib. Use when working on this repo, or as the worked example of machin's pointer/array FFI (alloc/poke raw buffers, the *T deref param, UploadMesh/LoadModelFromMesh) — building a C buffer/struct from MFL and handing it to the GPU.
+name: machin-game-demo-planet
+description: Build, run, and modify machin-game-demo-planet — a procedurally generated GPU mesh (planet-surface chunk) in machin (MFL) via raylib. Use when working on this repo, or as the worked example of machin's pointer/array FFI (alloc/poke raw buffers, the *T deref param, UploadMesh/LoadModelFromMesh) — building a C buffer/struct from MFL and handing it to the GPU.
 ---
 
-# machin-demo-planet
+# machin-game-demo-planet
 
 A procedurally generated **GPU mesh** — a curved chunk of a planet's surface, written in [machin](https://github.com/javimosch/machin) (MFL) and drawn with raylib. It is the reference example for machin's **pointer/array FFI** (raw memory + the `*T` param convention).
 
@@ -12,8 +12,8 @@ A procedurally generated **GPU mesh** — a curved chunk of a planet's surface, 
 ## Build & run
 
 ```bash
-./build.sh                 # machin encode planet.src -> planet.mfl, then machin build -> ./machin-demo-planet
-./machin-demo-planet
+./build.sh                 # machin encode planet.src -> planet.mfl, then machin build -> ./machin-game-demo-planet
+./machin-game-demo-planet
 ```
 
 Needs `machin` **v0.48.0+** (pointer/array FFI), a C compiler, **raylib**, and a display. `build.sh` prefers a system raylib, else vendors the prebuilt static release into `vendor/` (no root).
@@ -53,7 +53,7 @@ Field **names** must match raylib's `Mesh` (the boundary marshals by name); unse
 
 ## Patterns worth copying
 
-- **Build once.** A static mesh is uploaded a single time before the loop; the frame loop is just `DrawModelEx`. That's the whole point vs. immediate mode (machin-demo-terrain) which re-emits every frame.
+- **Build once.** A static mesh is uploaded a single time before the loop; the frame loop is just `DrawModelEx`. That's the whole point vs. immediate mode (machin-game-demo-terrain) which re-emits every frame.
 - **Bake lighting into vertex colors.** The default material is unlit, so flat-shade in MFL (face normal · light) and store the result in the color buffer.
 - **Non-indexed mesh.** 6 vertices per cell (two triangles), each triangle its own 3 vertices — makes per-triangle flat color trivial.
 - **int/float discipline** as everywhere: world coords `float`, offsets/counts `int`, cross with `float()`/`int()`; `a < -b` → `a < 0.0 - b`.

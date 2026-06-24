@@ -1,9 +1,9 @@
-// machin-demo-planet — a procedurally generated **GPU mesh**: a curved chunk of a
+// machin-game-demo-planet — a procedurally generated **GPU mesh**: a curved chunk of a
 // planet's surface, built once in raw memory by machin (MFL), uploaded to a GPU
 // vertex buffer, and drawn as a real model. Heights and per-triangle shading are
 // computed in MFL; the geometry lives on the GPU (not re-sent each frame).
 //
-//   ./build.sh && ./machin-demo-planet
+//   ./build.sh && ./machin-game-demo-planet
 //
 // This is the dogfood for machin's **pointer/array FFI**:
 //   - raw heap buffers — alloc / poke_f32 / poke_u8 / free — to fill the vertex

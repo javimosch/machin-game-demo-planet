@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build machin-demo-planet. Uses a system raylib if one is installed; otherwise
+# Build machin-game-demo-planet. Uses a system raylib if one is installed; otherwise
 # fetches raylib's prebuilt *static* release into vendor/ (no root needed) and
 # links that. The committed source stays system-style; the vendored path is
 # injected into a throwaway copy so planet.src is never rewritten.
@@ -35,5 +35,5 @@ else
     mv "$tmp" planet.mfl
 fi
 
-"$MACHIN" build planet.mfl -o machin-demo-planet
-echo "built ./machin-demo-planet"
+"$MACHIN" build planet.mfl -o machin-game-demo-planet
+echo "built ./machin-game-demo-planet"
